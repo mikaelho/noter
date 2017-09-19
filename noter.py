@@ -263,66 +263,33 @@ def create_menu_button(parent, show_menu_func, position=1, name='MenuButton', im
   b.action = show_menu_func
   parent.add_subview(b)
 
-class MenuView(ui.View):
-  
-  def show(self, sender):
-    self.out_of_sight = False
-    self.hidden = False
-    self.update_interval = 0.05
-    
-  def hide(self):
-    self.out_of_sight = True
-    self.update_interval = 0.05
-    
-  def update(self):
-    if self.out_of_sight:
-      if self.alpha > 0:
-        self.alpha -= 0.1
-      else:
-        self.update_interval = 0.0
-        self.hidden = True
-    else:
-      if self.alpha < 1:
-        self.alpha += 0.1
-      else:
-        self.update_interval = 0.0
-
 v = ui.WebView()
 v.delegate = Delegate()
 v.present(hide_title_bar=True)
 v.add_subview(spin)
 spin.style = ui.ACTIVITY_INDICATOR_STYLE_GRAY
 
-class Animations(Scripted):
-
-  @script
-  def show_dice(self, sender):
-    d.alpha=0
-    d.hidden=False
-    self.show(view=d)
-    self.hide(view=v['MenuButton'])
-    self.hide(view=v['RollButton'])
-    d.evaluate_javascript("$t.raise_event($t.id('throw'), 'mouseup');")
-      
-  @script
-  def hide_dice(self, sender):
-    self.hide(view=d)
-    self.show(view=v['MenuButton'])
-    self.show(view=v['RollButton'])
-    yield
-    d.x, d.y = (0,0)
-
-s = Animations()
-s.hidden = True
-v.add_subview(s)
-
 d = ui.WebView(frame=(-0.25*v.width,(v.height-v.width/1.2)/2,v.width*1.5,v.width/1.2), flex='WH', background_color='transparent')
 d.hidden = True
 d.transform = ui.Transform.rotation(math.pi/2).concat(ui.Transform.scale(1.2, 1.2))
 
+@script
+def show_dice(sender):
+  d.alpha=0
+  d.hidden=False
+  show(d)
+  hide(v['MenuButton'])
+  hide(v['RollButton'])  
+  d.evaluate_javascript("$t.raise_event($t.id('throw'), 'mouseup');")
+    
+@script
+def hide_dice(sender):
+  hide(d)
+  show(v['MenuButton'])
+  show(v['RollButton'])
 
 overlay = ui.Button(frame=(0,0,d.width,d.height), flex='WH', background_color='transparent')
-overlay.action = s.hide_dice
+overlay.action = hide_dice
 d.add_subview(overlay)
 
 #m = MenuView()
@@ -354,7 +321,7 @@ def update_view():
   
 update_view()
 
-create_menu_button(v, s.show_dice, position=2, name='RollButton', image_name='emj:Game_Die', color='blue')
+create_menu_button(v, show_dice, position=2, name='RollButton', image_name='emj:Game_Die', color='blue')
 
 v.add_subview(d)
 d.load_url(os.path.abspath('dice/dice/index.html'))
