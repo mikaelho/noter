@@ -1,6 +1,7 @@
 # coding: utf-8
 
 # Import Evernote auth_token, notebook_guid and ReminderStore reminder_namespace
+auth_token = None
 from noterconf import *
 
 # Using Evernote Python SDK from 
@@ -51,13 +52,15 @@ spin = ui.ActivityIndicator()
 
 note_syntax = ('<?xml version="1.0" encoding="UTF-8" standalone="no"?>', '<!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd">', '<en-note>', '</en-note>', '<?xml version="1.0" encoding="UTF-8"?>')
 
-client = EvernoteClient(token=auth_token, sandbox=False)
-note_store = client.get_note_store()
-user = client.get_user_store().getUser(auth_token)
-userId = user.id
-shardId = user.shardId
-
-filter = NoteFilter(notebookGuid=notebook_guid, order=Types.NoteSortOrder.TITLE)
+if auth_token:
+  client = EvernoteClient(token=auth_token, sandbox=False)
+  note_store = client.get_note_store()
+  user = client.get_user_store().getUser(auth_token)
+  
+  userId = user.id
+  shardId = user.shardId
+  
+  filter = NoteFilter(notebookGuid=notebook_guid, order=Types.NoteSortOrder.TITLE)
 
 # List all of the notebooks in the user's account
 #notebooks = note_store.listNotebooks()
@@ -117,7 +120,7 @@ def to_local_store(id, title, content):
 main_template = Template('''
 <html>
 <head>
-  <meta name="viewport" content="height=device-height, initial-scale=0.8">
+  <meta name="viewport" content="height=device-height, initial-scale=0.5">
   <style type="text/css">
     body {
       font-size: 12px;
@@ -146,7 +149,7 @@ main_template = Template('''
     }
     
     h1 {
-      font-size: 16px;
+      font-size: 24px;
       #font-weight: lighter;
       #margin-left: 100px;
       #margin-top: -70px;
