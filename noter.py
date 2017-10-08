@@ -123,13 +123,13 @@ main_template = Template('''
   <meta name="viewport" content="height=device-height, initial-scale=0.5">
   <style type="text/css">
     body {
-      font-size: 12px;
+      font-size: $font_size;
       #max-height: 120%;
     }
   
     .card {
       font-family: Arial;
-      width: 280px;
+      width: $card_width;
       border: 1px solid gray;
       box-shadow: 1px 1px 3px #888;
       border-top: 10px solid green;
@@ -272,9 +272,14 @@ v.present(hide_title_bar=True)
 v.add_subview(spin)
 spin.style = ui.ACTIVITY_INDICATOR_STYLE_GRAY
 
-d = ui.WebView(frame=(-0.25*v.width,(v.height-v.width/1.2)/2,v.width*1.5,v.width/1.2), flex='WH', background_color='transparent')
+if iphone:
+	frame = (-0.25*v.width,(v.height-v.width/1.2)/2,v.width*1.5,v.width/1.2)
+else:
+	frame = (0, 0, v.width, v.height)
+d = ui.WebView(frame=frame, flex='WH', background_color='transparent')
 d.hidden = True
-d.transform = ui.Transform.rotation(math.pi/2).concat(ui.Transform.scale(1.2, 1.2))
+if iphone:
+	d.transform = ui.Transform.rotation(math.pi/2).concat(ui.Transform.scale(1.2, 1.2))
 
 @script
 def show_dice(sender):
@@ -318,7 +323,9 @@ def update_view():
   if 'dirty' in local_storage and len(local_storage['dirty']) > 0:
     v['MenuButton'].background_color = 'red'
     
-  main_html = main_template.safe_substitute(cards=card_html)
+  card_width = str(280 if iphone else 450) + 'px'
+  font_size = str(12 if iphone else 18) + 'px'
+  main_html = main_template.safe_substitute(cards=card_html, card_width=card_width, font_size=font_size)
   
   v.load_html(main_html)
   
