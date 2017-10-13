@@ -16,7 +16,7 @@ from scripter import *
 
 import ui, console, webbrowser
 
-import json, functools, re, os, math
+import json, functools, re, os, math, urllib
 from string import Template
 
 from objc_util import ObjCInstance, ObjCClass, on_main_thread
@@ -52,6 +52,9 @@ spin = ui.ActivityIndicator()
 
 note_syntax = ('<?xml version="1.0" encoding="UTF-8" standalone="no"?>', '<!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd">', '<en-note>', '</en-note>', '<?xml version="1.0" encoding="UTF-8"?>')
 
+todo_true = '<en-todo checked="true"/>'
+todo_false = '<en-todo checked="false"/>'
+
 if auth_token:
   client = EvernoteClient(token=auth_token, sandbox=False)
   note_store = client.get_note_store()
@@ -69,12 +72,10 @@ if auth_token:
 #  print("  * ", notebook.name, notebook.guid)
 
 def load_all_from_evernote():
-  spin.start()
   rexp = r'(<[^>]+) style=".*?"'
   pr = re.compile(rexp, re.IGNORECASE)
-  local_storage['dirty'] = {}
+  local_management['dirty'] = {}
   local_keys = dict.fromkeys(local_storage, True)
-  del local_keys['dirty']
   v['MenuButton'].background_color = 'green'
   notes = note_store.findNotesMetadata(filter, 0, 1000, NotesMetadataResultSpec())
   for note_data in reversed(notes.notes):
@@ -82,45 +83,113 @@ def load_all_from_evernote():
       del local_keys[note_data.guid]
     note = note_store.getNote(note_data.guid, True, False, False, False)
     stripped_content = note.content
-    #print('-'*50)
-    #print(cntnt)
-    #orig_content = cntnt[cntnt.find('>')+1:]
-    #soup = BeautifulSoup(orig_content, "html5lib")
-    #for tag in soup():
-      #for attribute in ["class", "id", "name", "style"]:
-        #del tag[attribute]
-    #stripped_content = str(soup)
-    #if not cntnt.startswith(preamble):
-
-    #cntnt = cntnt[len(preamble):]
-    remove_success_count = 0
-    for to_remove in note_syntax:
-      old_content = stripped_content
-      stripped_content = old_content.replace(to_remove, '')
-      if old_content != stripped_content:
-        remove_success_count += 1
-    if remove_success_count != 4:
-      print(note.content)
-      raise ValueError(f"Note content from server with title '{note.title}' did not include all mandatory parts")
-    stripped_content = pr.sub(r'\1', stripped_content)
-    #print(stripped_content)
+    if '<en-note/>' in stripped_content:
+      stripped_content = ''
+    else:
+      remove_success_count = 0
+      for to_remove in note_syntax:
+        old_content = stripped_content
+        stripped_content = old_content.replace(to_remove, '')
+        if old_content != stripped_content:
+          remove_success_count += 1
+      if remove_success_count != 4:
+        print(note.content)
+        raise ValueError(f"Note content from server with title '{note.title}' did not include all mandatory parts")
+      stripped_content = pr.sub(r'\1', stripped_content)
     #note_link = f'evernote:///view/{userId}/{shardId}/{note_data.guid}/{note_data.guid}/'
-    to_local_store(note_data.guid, note.title, stripped_content)
+    to_local_store(note_data.guid, note.title, stripped_content, note.tagGuids is not None)
   for  id in local_keys:
     del local_storage[id]
-  spin.stop()
   console.hud_alert('Updated from server')
     
-def to_local_store(id, title, content):
+def to_local_store(id, title, content, section):
   local_storage[id] = {
     'title': title,
     'content': content,
+    'section': section
   }
 
 main_template = Template('''
 <html>
 <head>
   <meta name="viewport" content="height=device-height, initial-scale=0.5">
+  <script type="text/javascript">
+  
+    console = new Object();
+    console.log = function(log) {
+      window.location.href="ios-log:"+log;
+      return false;
+    };
+    window.onerror = (function(error, url, line,col,errorobj) {
+      console.log("error: "+error+"%0Aurl:"+url+" line:"+line+"col:"+col+"stack:"+errorobj);
+    });
+  
+    function initialize() {
+      //console.log("logging activated");
+    }
+  
+    function make_editable(editable) {
+      class_editable("card_title", editable);
+      class_editable("card_content", editable);
+      var clickable = (editable == false);
+      div_clickable(clickable);
+    }
+    
+    function class_editable(classname, editable) {
+      elems = document.getElementsByClassName(classname);
+      for(var i = 0; i < elems.length; i++) {
+        if (editable) {
+          elems[i].classList.remove("touch-transparent");
+        } else {
+          elems[i].classList.add("touch-transparent");
+        }
+      }
+    }
+    
+    function highlight_elem(elem_id, turn_on) {
+      elem = document.getElementById(elem_id);
+      if (turn_on) {
+        elem.classList.add("selected_card");
+      } else {
+        elem.classList.remove("selected_card");
+      }
+    }
+
+    function click_handler(event) {
+      window.location.href='http://click/'+this.id; return false;
+    }
+        
+    function div_clickable(clickable) {
+      elems = document.getElementsByClassName("card");
+      for(var i = 0; i < elems.length; i++) {
+        if (clickable) {
+          elems[i].onclick = click_handler;
+        } else {
+          elems[i].onclick = null;
+        }
+      }
+    }
+    
+    function set_order(card_id, order_no) {
+      elem = document.getElementById(card_id);
+      elem.style.order = order_no;
+    }
+
+    function get_checkboxes(card_id) {
+      checkbox_states = '';
+      elem = document.getElementById(card_id);
+      checks = elem.getElementsByTagName("input"); 
+      for (var i = 0; i < checks.length; i++) { 
+        if (checks[i].checked) {
+          checkbox_states += 'T';
+        } else {
+          checkbox_states += 'F';
+        }
+      }
+      return checkbox_states;
+    }
+    
+  </script>
   <style type="text/css">
     body {
       font-size: $font_size;
@@ -136,6 +205,18 @@ main_template = Template('''
       min-height: 50px;
       padding: 10px;
       margin: 10px;
+    }
+    
+    .section {
+      background-color: #eeffee;
+    }
+    
+    .touch-transparent {
+      pointer-events: none;
+    }
+    
+    .selected_card {
+      border-top: 10px solid red;
     }
     
     #mainbox {
@@ -167,7 +248,7 @@ main_template = Template('''
     }
   </style>
 </head>
-<body > <!-- onload="initialize();" -->
+<body onload="initialize();">
 <div id="mainbox">
   $cards
 </div>
@@ -175,46 +256,82 @@ main_template = Template('''
 ''')
 
 card_template = Template('''
-<div class="card" id="$id">
-  <h1><span class="title" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$title</span></h1>
-  <div class="content" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
+<div class="card$section_class" id="$id" style="order: $order">
+  <h1><span class="card_title" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$title</span></h1>
+  <div class="card_content" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
 </div>
 ''')
 
 def get_note_from_page(webview, id):
-  title_js = f'el = document.getElementById("{id}"); el.getElementsByClassName("title")[0].innerHTML;'
-  content_js = f'el = document.getElementById("{id}"); el.getElementsByClassName("content")[0].innerHTML;'
+  title_js = f'el = document.getElementById("{id}"); el.getElementsByClassName("card_title")[0].innerHTML;'
+  content_js = f'el = document.getElementById("{id}"); el.getElementsByClassName("card_content")[0].innerHTML;'
   title = webview.evaluate_javascript(title_js)
   content = webview.evaluate_javascript(content_js)
   return (title, content)
 
+selected_id = None
+
 class Delegate():
   def webview_should_start_load(self, webview, url, nav_type):
+    global selected_id
+    
     if url == 'about:blank':
       return True
+      
     if url.startswith('http://blur/'):
       id = url[url.rfind('/')+1:]
       (title, content) = get_note_from_page(webview, id)
       update_local_note(id, title, content)
-      #print('UPDATE:')
-      #print(content)
       return False
+      
+    if url.startswith('http://click/'):
+      id = url[url.rfind('/')+1:]
+      if not selected_id:
+        selected_id = id
+        webview.eval_js(f'highlight_elem("{id}", true);')
+      else:
+        if selected_id != id:
+          move_card(selected_id, id)
+        webview.eval_js(f'highlight_elem("{selected_id}", false);')
+        selected_id = None
+      return False
+      
+    if url.startswith('ios-log:'):
+      print(urllib.parse.unquote(url[len('ios-log:'):]))
+      return False
+      
     if url.startswith('http:') or url.startswith('https:'):
       url = 'safari-' + url
+      
     webbrowser.open(url)
     return False
+    
+def move_card(id, front_of_id):
+  order_list = local_management['order']
+  index1 = order_list.index(id)
+  del order_list[index1]
+  index2 = order_list.index(front_of_id)
+  order_list.insert(index2, id)
+  local_management['order'] = order_list
+  for i, id in enumerate(order_list):
+    v.eval_js(f'set_order("{id}", {i});')
+
+checkbox_re = re.compile(r'<span contenteditable="false"><input type="checkbox"[^>]+></span>')
 
 def update_local_note(id, title, content):
   prev_version = local_storage[id]
+  checkboxes = v.eval_js(f'get_checkboxes("{id}");')
+  for state in checkboxes:
+    content = checkbox_re.sub(todo_true if state == 'T' else todo_false, content, 1)
   if prev_version['title'] != title or prev_version['content'] != content:
-    dirties = local_storage['dirty']
+    dirties = local_management['dirty']
     dirties[id] = True
-    local_storage['dirty'] = dirties
-    to_local_store(id, title, content)
+    local_management['dirty'] = dirties
+    to_local_store(id, title, content, prev_version['section'])
     v['MenuButton'].background_color = 'red'
 
 def show_menu(sender):
-  local_dirty_count = len(local_storage['dirty'])
+  local_dirty_count = len(local_management['dirty'])
   local_dirty_message = f'{local_dirty_count} local changes' if local_dirty_count > 0 else 'No local changes'
   try:
     if local_dirty_count > 0:
@@ -229,8 +346,7 @@ def show_menu(sender):
   except KeyboardInterrupt: pass
 
 def send_locals_to_server():
-  spin.start()
-  dirties = local_storage['dirty']
+  dirties = local_management['dirty']
   count = len(dirties)
   for id in dirties:
     local_note = local_storage[id]
@@ -238,25 +354,23 @@ def send_locals_to_server():
     ever_note.guid = id
     ever_note.title = local_note['title']
     cntnt = re.sub(r'<br>', r'<br/>', local_note['content'])
+    #cntnt = cntnt.replace(checkbox_false, todo_false)
+    #cntnt = cntnt.replace(checkbox_true, todo_true)
     ever_note.content = ''.join(note_syntax[0:3]) + cntnt + note_syntax[3]
-    #print('_'*40)
-    #print(ever_note.content)
     try:
       note_store.updateNote(ever_note)
     except Exception as e:
       print(e)
       raise e
-  local_storage['dirty'] = {}
+  local_management['dirty'] = {}
   v['MenuButton'].background_color = 'green'
   console.hud_alert(f'{count} local changes sent to server')
-  spin.stop()
 
-def create_menu_button(parent, show_menu_func, position=1, name='MenuButton', image_name='emj:Cloud', color='green'):
+def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Cloud', color='green'):
   b = ui.Button(name=name)
   b.image = ui.Image(image_name).with_rendering_mode(ui.RENDERING_MODE_ORIGINAL)
   b.tint_color = 'white'
   b.background_color = color
-  b.alpha = 0.7
   d = 40
   b.width = b.height = d
   b.corner_radius = 0.5 * d
@@ -281,6 +395,25 @@ d.hidden = True
 if iphone:
 	d.transform = ui.Transform.rotation(math.pi/2).concat(ui.Transform.scale(1.2, 1.2))
 
+pinning = False
+
+@script
+def pin_notes(sender):
+  global pinning, selected_id
+  pinning = pinning == False
+  sender.background_color = 'green' if pinning else 'grey'
+  if pinning:
+    hide(v['MenuButton'])
+    hide(v['RollButton'])
+    v.eval_js('make_editable(false);')
+  else:
+    show(v['MenuButton'])
+    show(v['RollButton'])
+    v.eval_js('make_editable(true);')
+    if selected_id:
+      v.eval_js(f'highlight_elem("{selected_id}", false);')
+      selected_id = None
+  
 @script
 def show_dice(sender):
   d.alpha=0
@@ -288,6 +421,7 @@ def show_dice(sender):
   show(d)
   hide(v['MenuButton'])
   hide(v['RollButton'])  
+  hide(v['MoveButton'])  
   d.evaluate_javascript("$t.raise_event($t.id('throw'), 'mouseup');")
     
 @script
@@ -295,6 +429,7 @@ def hide_dice(sender):
   hide(d)
   show(v['MenuButton'])
   show(v['RollButton'])
+  show(v['MoveButton'])
 
 overlay = ui.Button(frame=(0,0,d.width,d.height), flex='WH', background_color='transparent')
 overlay.action = hide_dice
@@ -310,28 +445,63 @@ d.add_subview(overlay)
 create_menu_button(v, show_menu)
 
 local_storage = ReminderStore(namespace=reminder_namespace, to_json=True, cache=False)
+local_management = ReminderStore(namespace=management_namespace, to_json=True, cache=False)
 
-if 'dirty' not in local_storage:
+if 'dirty' in local_storage:
+  local_management['dirty'] = local_storage['dirty']
+  del local_storage['dirty']
+if 'order' in local_storage:
+  local_management['order'] = local_storage['order']
+  del local_storage['order']
+
+if 'dirty' not in local_management:
   load_all_from_evernote()
+if 'order' not in local_management:
+  local_management['order'] = [ id for id in local_storage ]
 
 def update_view():
   card_html = ''
+
+  order_list = local_management['order']
   for id in local_storage:
-    if id == 'dirty': continue
+    if id not in order_list:
+      order_list.append(id)
+  local_management['order'] = order_list
+
+  order = 0
+  removed = []
+  section_on = True
+  for id in local_management['order']:
     note = local_storage[id]
-    card_html += card_template.safe_substitute(id=id, title=note['title'], content=note['content'])
-  if 'dirty' in local_storage and len(local_storage['dirty']) > 0:
+    if not note:
+      removed.append(id)
+      continue
+    if note['section']:
+      section_on = section_on == False
+
+    checkbox_true = f'<span contenteditable="false"><input type="checkbox" checked="true" onchange="window.location.href=\'http://blur/{id}\'"/></span>'
+    checkbox_false = f'<span contenteditable="false"><input type="checkbox" onchange="window.location.href=\'http://blur/{id}\'"/></span>'
+    
+    note_content = note['content']   
+    note_content = note_content.replace(todo_false, checkbox_false)
+    note_content = note_content.replace(todo_true, checkbox_true)
+    card_html += card_template.safe_substitute(id=id, title=note['title'], content=note_content, order=order, section_class=' section' if section_on else '')
+    order += 1
+  cleaned_list = [id for id in local_management['order'] if id not in removed]
+  local_management['order'] = cleaned_list
+  if 'dirty' in local_management and len(local_management['dirty']) > 0:
     v['MenuButton'].background_color = 'red'
     
   card_width = str(280 if iphone else 450) + 'px'
   font_size = str(12 if iphone else 18) + 'px'
   main_html = main_template.safe_substitute(cards=card_html, card_width=card_width, font_size=font_size)
-  
   v.load_html(main_html)
   
 update_view()
 
-create_menu_button(v, show_dice, position=2, name='RollButton', image_name='emj:Game_Die', color='blue')
+create_menu_button(v, show_dice, position=3, name='RollButton', image_name='emj:Game_Die', color='blue')
+
+create_menu_button(v, pin_notes, position=1, name='MoveButton', image_name='emj:Pushpin_1', color='grey')
 
 v.add_subview(d)
 d.load_url(os.path.abspath('dice/dice/index.html'))
