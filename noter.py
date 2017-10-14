@@ -125,7 +125,7 @@ main_template = Template('''
     });
   
     function initialize() {
-      //console.log("logging activated");
+      console.log("logging activated");
     }
   
     function make_editable(editable) {
@@ -187,6 +187,31 @@ main_template = Template('''
         }
       }
       return checkbox_states;
+    }
+		
+    function check_for_lists(target) {
+    	var range1 = window.getSelection().getRangeAt(0),
+			range2 = range1.cloneRange();
+			range2.selectNodeContents(target);
+			range2.setEnd(range1.endContainer, range1.endOffset);
+			caretOffset = range2.toString().length;
+			//console.log("<"+range2.toString()+">")
+
+			var textOf = target.textContent;
+			var beforePart = textOf.substring(0, caretOffset);
+			//console.log("<"+beforePart+">");
+			if (beforePart.match(/\*\ /) !== null) {
+				alert("<"+beforePart+">");
+			}
+			if (textOf.substring(0, caretOffset).match(/^\* $/m)) {
+				alert("pek");
+    /**
+				if ((textOf.length == caretOffset) || (textOf.substring(caretOffset, caretOffset+1) == '\n')) {
+					alert("jep");
+				}
+    **/
+			}
+
     }
     
   </script>
@@ -258,7 +283,7 @@ main_template = Template('''
 card_template = Template('''
 <div class="card$section_class" id="$id" style="order: $order">
   <h1><span class="card_title" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$title</span></h1>
-  <div class="card_content" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
+  <div class="card_content" contenteditable="true" oninput="check_for_lists(event.target);" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
 </div>
 ''')
 
