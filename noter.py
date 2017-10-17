@@ -189,29 +189,40 @@ main_template = Template('''
       return checkbox_states;
     }
 		
-    function check_for_lists(target) {
-    	var range1 = window.getSelection().getRangeAt(0),
-			range2 = range1.cloneRange();
-			range2.selectNodeContents(target);
-			range2.setEnd(range1.endContainer, range1.endOffset);
-			caretOffset = range2.toString().length;
-			//console.log("<"+range2.toString()+">")
-
-			var textOf = target.textContent;
-			var beforePart = textOf.substring(0, caretOffset);
-			//console.log("<"+beforePart+">");
-			if (beforePart.match(/\*\ /) !== null) {
-				alert("<"+beforePart+">");
-			}
-			if (textOf.substring(0, caretOffset).match(/^\* $/m)) {
-				alert("pek");
-    /**
-				if ((textOf.length == caretOffset) || (textOf.substring(caretOffset, caretOffset+1) == '\n')) {
-					alert("jep");
-				}
-    **/
-			}
-
+    function check_for_replace(target) {
+      var sel = window.getSelection();
+      var rng = sel.getRangeAt(0);
+      if (rng.collapsed) {
+        var replaced = false;
+        var node = rng.endContainer;
+        var parentNode = node.parentNode;
+        var txt = node.textContent;
+        if (txt == String.fromCharCode(42,160)) {
+          parentNode.innerHTML = "<ul><li></ul>";
+          replaced = true;
+        } 49,46,160
+        if (txt == String.fromCharCode(49,46,160)) {
+          parentNode.innerHTML = "<ol><li></ol>";
+          replaced = true;
+        }
+        if (replaced) {
+          var targetNode = parentNode.firstChild.firstChild;
+          var targetRange = new Range();
+          targetRange.selectNodeContents(targetNode);
+          sel.empty();
+          sel.addRange(targetRange);
+        } else {
+          var beforePart = txt.substring(0, rng.endOffset)
+          if (beforePart.endsWith("|_|")) {
+            document.execCommand("delete");
+            document.execCommand("delete");
+            document.execCommand("delete");
+            card_id = target.parentNode.id;
+            html = "<input type=\\"checkbox\\"/>";
+            document.execCommand("insertHTML", false, html);
+          }
+        }
+      }
     }
     
   </script>
@@ -283,7 +294,7 @@ main_template = Template('''
 card_template = Template('''
 <div class="card$section_class" id="$id" style="order: $order">
   <h1><span class="card_title" contenteditable="true" onblur="window.location.href='http://blur/$id'; return false;">$title</span></h1>
-  <div class="card_content" contenteditable="true" oninput="check_for_lists(event.target);" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
+  <div class="card_content" contenteditable="true" oninput="check_for_replace(event.target);" onblur="window.location.href='http://blur/$id'; return false;">$content</div>
 </div>
 ''')
 
@@ -341,7 +352,7 @@ def move_card(id, front_of_id):
   for i, id in enumerate(order_list):
     v.eval_js(f'set_order("{id}", {i});')
 
-checkbox_re = re.compile(r'<span contenteditable="false"><input type="checkbox"[^>]+></span>')
+checkbox_re = re.compile(r'<input type="checkbox"[^>]*>')
 
 def update_local_note(id, title, content):
   prev_version = local_storage[id]
@@ -504,8 +515,8 @@ def update_view():
     if note['section']:
       section_on = section_on == False
 
-    checkbox_true = f'<span contenteditable="false"><input type="checkbox" checked="true" onchange="window.location.href=\'http://blur/{id}\'"/></span>'
-    checkbox_false = f'<span contenteditable="false"><input type="checkbox" onchange="window.location.href=\'http://blur/{id}\'"/></span>'
+    checkbox_true = '<input type="checkbox" checked="true"/>'
+    checkbox_false = '<input type="checkbox"/>'
     
     note_content = note['content']   
     note_content = note_content.replace(todo_false, checkbox_false)
