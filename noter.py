@@ -16,7 +16,7 @@ from scripter import *
 
 import ui, console, webbrowser
 
-import json, functools, re, os, math, urllib
+import json, re, os, math, urllib
 from string import Template
 
 from objc_util import ObjCInstance, ObjCClass, on_main_thread
@@ -46,7 +46,7 @@ def _make_webview_transparent(webview):
 
       # Set background color to clear color
       # https://developer.apple.com/documentation/uikit/uicolor/1621945-clearcolor?language=objc
-      clear_color = ObjCClass('UIColor').clearColor()
+      # clear_color = ObjCClass('UIColor').clearColor()
         
 spin = ui.ActivityIndicator()
 
@@ -368,7 +368,7 @@ def update_local_note(id, title, content):
 
 def show_menu(sender):
   local_dirty_count = len(local_management['dirty'])
-  local_dirty_message = f'{local_dirty_count} local changes' if local_dirty_count > 0 else 'No local changes'
+  # local_dirty_message = f'{local_dirty_count} local changes' if local_dirty_count > 0 else 'No local changes'
   try:
     if local_dirty_count > 0:
       response = console.alert('Evernote sync', f'{local_dirty_count} local changes', 'Load all from server', 'Upload local changes')
@@ -402,16 +402,24 @@ def send_locals_to_server():
   v['MenuButton'].background_color = 'green'
   console.hud_alert(f'{count} local changes sent to server')
 
-def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Cloud', color='green'):
+def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Cloud', color='green', hidden=False, tint=False):
   b = ui.Button(name=name)
-  b.image = ui.Image(image_name).with_rendering_mode(ui.RENDERING_MODE_ORIGINAL)
+  b.image = ui.Image(image_name)
+  if not tint:
+    b.image = b.image.with_rendering_mode(ui.RENDERING_MODE_ORIGINAL)
   b.tint_color = 'white'
   b.background_color = color
   d = 40
   b.width = b.height = d
   b.corner_radius = 0.5 * d
-  b.x = parent.width - 1.5 * d
-  b.y = parent.height - position * 1.5 * d
+  if position > 0:
+    b.x = parent.width - 1.5 * d
+    b.y = parent.height - position * 1.5 * d
+  else:
+    b.x = parent.width + position * 1.5 * d
+    b.y = parent.height - 1.5 * d
+    
+  #TODO: add hidden
   
   b.action = show_menu_func
   parent.add_subview(b)
@@ -535,9 +543,15 @@ def update_view():
   
 update_view()
 
-create_menu_button(v, show_dice, position=3, name='RollButton', image_name='emj:Game_Die', color='blue')
+create_menu_button(v, show_dice, position=3, name='RollButton', image_name='emj:Game_Die', color='transparent')
 
-create_menu_button(v, pin_notes, position=1, name='MoveButton', image_name='emj:Pushpin_1', color='grey')
+create_menu_button(v, pin_notes, position=-2, name='MoveButton', image_name='emj:Pushpin_2', color='transparent', hidden=True)
+
+create_menu_button(v, pin_notes, position=-3, name='AddButton', image_name='emj:Plus_Sign', color='green', hidden=True, tint=True)
+
+create_menu_button(v, pin_notes, position=-4, name='DeleteButton', image_name='emj:Minus_Sign', color='red', hidden=True, tint=True)
+
+create_menu_button(v, pin_notes, position=1, name='ShowMenuButton', image_name='emj:Wrench', color='white')
 
 v.add_subview(d)
 d.load_url(os.path.abspath('dice/dice/index.html'))
