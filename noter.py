@@ -13,10 +13,11 @@ from evernote.api.client import EvernoteClient
 
 from ReminderStore import ReminderStore
 from scripter import *
+import evernoteproxy, asyncui, asyncio
 
 import ui, console, webbrowser
 
-import json, re, os, math, urllib
+import json, re, os, math, urllib, threading
 from string import Template
 
 from objc_util import ObjCInstance, ObjCClass, on_main_thread
@@ -55,6 +56,9 @@ note_syntax = ('<?xml version="1.0" encoding="UTF-8" standalone="no"?>', '<!DOCT
 todo_true = '<en-todo checked="true"/>'
 todo_false = '<en-todo checked="false"/>'
 
+nice_green = (.52, .77, .33)
+nice_red = (.77, .38, .38)
+
 if auth_token:
   client = EvernoteClient(token=auth_token, sandbox=False)
   note_store = client.get_note_store()
@@ -62,8 +66,6 @@ if auth_token:
   
   userId = user.id
   shardId = user.shardId
-  
-  filter = NoteFilter(notebookGuid=notebook_guid, order=Types.NoteSortOrder.TITLE)
 
 # List all of the notebooks in the user's account
 #notebooks = note_store.listNotebooks()
@@ -71,14 +73,18 @@ if auth_token:
 #for notebook in notebooks:
 #  print("  * ", notebook.name, notebook.guid)
 
-def load_all_from_evernote():
+def load_from_evernote(all_notes):
   rexp = r'(<[^>]+) style=".*?"'
   pr = re.compile(rexp, re.IGNORECASE)
   local_management['dirty'] = {}
   local_keys = dict.fromkeys(local_storage, True)
-  v['MenuButton'].background_color = 'green'
+  #v['MenuButton'].background_color = 'green'
+  filter = NoteFilter(notebookGuid=notebook_guid, order=Types.NoteSortOrder.TITLE)
+  #if not all_notes and update_count in local_management:
+    #filter.words = 
   notes = note_store.findNotesMetadata(filter, 0, 1000, NotesMetadataResultSpec())
-  for note_data in reversed(notes.notes):
+  #notes.updateCount
+  for note_data in notes.notes:
     if note_data.guid in local_keys:
       del local_keys[note_data.guid]
     note = note_store.getNote(note_data.guid, True, False, False, False)
@@ -125,7 +131,7 @@ main_template = Template('''
     });
   
     function initialize() {
-      console.log("logging activated");
+      //console.log("logging activated");
     }
   
     function make_editable(editable) {
@@ -360,55 +366,83 @@ def update_local_note(id, title, content):
   for state in checkboxes:
     content = checkbox_re.sub(todo_true if state == 'T' else todo_false, content, 1)
   if prev_version['title'] != title or prev_version['content'] != content:
-    dirties = local_management['dirty']
-    dirties[id] = True
-    local_management['dirty'] = dirties
+    dirty_queue.put_nowait(id)
+    print(dirty_queue.qsize())
     to_local_store(id, title, content, prev_version['section'])
-    v['MenuButton'].background_color = 'red'
+    v['MenuButton'].background_color = nice_red
 
 def show_menu(sender):
   local_dirty_count = len(local_management['dirty'])
   # local_dirty_message = f'{local_dirty_count} local changes' if local_dirty_count > 0 else 'No local changes'
   try:
     if local_dirty_count > 0:
-      response = console.alert('Evernote sync', f'{local_dirty_count} local changes', 'Load all from server', 'Upload local changes')
+      response = console.alert('Evernote sync', f'{local_dirty_count} local changes', 'Load all from server', 'Sync from server', 'Synchronize')
     else:
-      response = console.alert('Evernote sync', 'No local changes', 'Load all from server')
+      response = console.alert('Evernote sync', 'No local changes', 'Load all from server', 'Sync from server')
     if response == 1:
-      load_all_from_evernote()
-      update_view()
+      load_from_evernote(all_notes=True)
     if response == 2:
+      load_from_evernote(all_notes=False)
+    if response == 3:
       send_locals_to_server()
+      load_from_evernote(all_notes=False)
+    update_view()
   except KeyboardInterrupt: pass
 
-def send_locals_to_server():
+async def send_locals_to_server():
   dirties = local_management['dirty']
   count = len(dirties)
   for id in dirties:
     local_note = local_storage[id]
-    ever_note = Types.Note()
-    ever_note.guid = id
-    ever_note.title = local_note['title']
-    cntnt = re.sub(r'<br>', r'<br/>', local_note['content'])
-    #cntnt = cntnt.replace(checkbox_false, todo_false)
-    #cntnt = cntnt.replace(checkbox_true, todo_true)
-    ever_note.content = ''.join(note_syntax[0:3]) + cntnt + note_syntax[3]
-    try:
-      note_store.updateNote(ever_note)
-    except Exception as e:
-      print(e)
-      raise e
+    note = {
+      'id': id,
+      'title': local_note['title'],
+      'content': local_note['content']
+    }
+    update_count = await aui.post('http://127.0.0.1/update_note', {'note': note})
   local_management['dirty'] = {}
-  v['MenuButton'].background_color = 'green'
-  console.hud_alert(f'{count} local changes sent to server')
+  v['MenuButton'].background_color = nice_green
+  #console.hud_alert(f'{count} local changes sent to server')
+  
+async def check_and_update_from_remote():
+  remote_dirty = False
+  local_update_count = 0 if 'update_count' not in local_management else local_management['update_count']
+  remote_update_count = (await aui.get('http://127.0.0.1/get_sync_state'))['update_count']
+  if local_update_count < remote_update_count:
+    notes = (await aui.get(f'http://127.0.0.1/get_filtered_sync_chunk/{local_update_count}'))['notes']
+    await dirties_queue_to_local()
+    dirties = local_management['dirty']
+    for note_meta in notes:
+      id, active = note_meta['guid'], note_meta['active']
+      if id in dirties:
+        continue
+      if not active and id in local_storage:
+        del local_storage[id]
+        remote_dirty = True
+        continue
+      note = await aui.get(f'http://127.0.0.1/get_note/{id}')
+      (title, content, section) = (note['title'], note['content'], note['section'])
+      if id not in local_storage:
+        to_local_store(id, title, content, section)
+        remote_dirty = True
+        continue
+      local_note = local_storage[id]
+      if local_note['title'] != title or local_note['content'] != content or local_note['section'] != section:
+        to_local_store(id, title, content, section)
+        remote_dirty = True
+    local_management['update_count'] = remote_update_count
+    if remote_dirty:
+      show(v['MenuButton'])
+    
 
-def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Cloud', color='green', hidden=False, tint=False):
+def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Checkmark_1', color='green', hidden=False, tint=False):
   b = ui.Button(name=name)
   b.image = ui.Image(image_name)
   if not tint:
     b.image = b.image.with_rendering_mode(ui.RENDERING_MODE_ORIGINAL)
   b.tint_color = 'white'
   b.background_color = color
+  b.hidden = hidden
   d = 40
   b.width = b.height = d
   b.corner_radius = 0.5 * d
@@ -418,17 +452,19 @@ def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', im
   else:
     b.x = parent.width + position * 1.5 * d
     b.y = parent.height - 1.5 * d
-    
-  #TODO: add hidden
   
   b.action = show_menu_func
   parent.add_subview(b)
 
-v = ui.WebView()
+aui = asyncui.AsyncUIView()
+aui.present(hide_title_bar=True)
+
+dirty_queue = aui.create_queue()
+
+v = ui.WebView(flex='WH')
 v.delegate = Delegate()
-v.present(hide_title_bar=True)
-v.add_subview(spin)
-spin.style = ui.ACTIVITY_INDICATOR_STYLE_GRAY
+aui.add_subview(v)
+v.frame=aui.bounds
 
 if iphone:
 	frame = (-0.25*v.width,(v.height-v.width/1.2)/2,v.width*1.5,v.width/1.2)
@@ -442,28 +478,51 @@ if iphone:
 pinning = False
 
 @script
+def show_remote_updates(sender):
+  update_view()
+  hide(sender)
+
+@script
 def pin_notes(sender):
   global pinning, selected_id
   pinning = pinning == False
   sender.background_color = 'green' if pinning else 'grey'
   if pinning:
-    hide(v['MenuButton'])
-    hide(v['RollButton'])
+    hide_except_me(sender)
+    #hide(v['MenuButton'])
+    #hide(v['RollButton'])
     v.eval_js('make_editable(false);')
   else:
-    show(v['MenuButton'])
-    show(v['RollButton'])
+    show_except_me(sender)
+    #show(v['MenuButton'])
+    #show(v['RollButton'])
     v.eval_js('make_editable(true);')
     if selected_id:
       v.eval_js(f'highlight_elem("{selected_id}", false);')
       selected_id = None
+ 
+@script 
+def hide_except_me(me):
+  for view in v.subviews:
+    if view != me and type(view) == Button:
+      hide(view)
+  
+@script 
+def show_except_me(me):
+  for view in v.subviews:
+    if view != me and type(view) == Button:
+      show(view)
+  
+@script
+def add_note(sender):
+  toggle_menu(sender)
   
 @script
 def show_dice(sender):
   d.alpha=0
   d.hidden=False
   show(d)
-  hide(v['MenuButton'])
+  #hide(v['MenuButton'])
   hide(v['RollButton'])  
   hide(v['MoveButton'])  
   d.evaluate_javascript("$t.raise_event($t.id('throw'), 'mouseup');")
@@ -471,7 +530,7 @@ def show_dice(sender):
 @script
 def hide_dice(sender):
   hide(d)
-  show(v['MenuButton'])
+  #show(v['MenuButton'])
   show(v['RollButton'])
   show(v['MoveButton'])
 
@@ -486,7 +545,7 @@ d.add_subview(overlay)
 
 #v.add_subview(m)
 
-create_menu_button(v, show_menu)
+create_menu_button(v, show_remote_updates, position=3, color=nice_red, hidden=True, tint=True)
 
 local_storage = ReminderStore(namespace=reminder_namespace, to_json=True, cache=False)
 local_management = ReminderStore(namespace=management_namespace, to_json=True, cache=False)
@@ -533,8 +592,8 @@ def update_view():
     order += 1
   cleaned_list = [id for id in local_management['order'] if id not in removed]
   local_management['order'] = cleaned_list
-  if 'dirty' in local_management and len(local_management['dirty']) > 0:
-    v['MenuButton'].background_color = 'red'
+  #if 'dirty' in local_management and len(local_management['dirty']) > 0:
+  #v['MenuButton'].background_color = 'red'
     
   card_width = str(280 if iphone else 450) + 'px'
   font_size = str(12 if iphone else 18) + 'px'
@@ -543,17 +602,84 @@ def update_view():
   
 update_view()
 
-create_menu_button(v, show_dice, position=3, name='RollButton', image_name='emj:Game_Die', color='transparent')
+menu_open = False
+menu_buttons = ['DeleteButton','AddButton','MoveButton']
+
+@script
+def toggle_menu(sender):
+  global menu_open
+  menu_speed = 0.5
+  menu_open = menu_open == False
+  menu_btn = v['ShowMenuButton']
+  menu_location = menu_btn.center
+  if menu_open:
+    rotate_by(menu_btn, -90, duration=menu_speed)
+    slide_color(menu_btn, 'background_color', (1,1,1,0.4), duration=menu_speed)
+    for button_name in menu_buttons:
+      btn = v[button_name]
+      target_location = btn.center
+      btn.center = menu_location
+      show(btn, duration=menu_speed)
+      roll_to(btn, target_location, duration=menu_speed)
+    yield
+  else:
+    locations = {}
+    rotate_by(menu_btn, 90, duration=menu_speed)
+    slide_color(menu_btn, 'background_color', 'white', duration=menu_speed)
+    for button_name in menu_buttons:
+      btn = v[button_name]
+      locations[button_name] = btn.center
+      hide(btn, duration=menu_speed)
+      roll_to(btn, menu_location, end_right_side_up=False, duration=menu_speed)
+    yield
+    for button_name in menu_buttons:
+      btn = v[button_name]
+      btn.center = locations[button_name]
+
+create_menu_button(v, show_dice, position=2, name='RollButton', image_name='emj:Game_Die', color='transparent')
+
+create_menu_button(v, pin_notes, position=-4, name='DeleteButton', image_name='emj:Minus_Sign', color=nice_red, hidden=True, tint=True)
+
+create_menu_button(v, add_note, position=-3, name='AddButton', image_name='emj:Plus_Sign', color=nice_green, hidden=True, tint=True)
 
 create_menu_button(v, pin_notes, position=-2, name='MoveButton', image_name='emj:Pushpin_2', color='transparent', hidden=True)
 
-create_menu_button(v, pin_notes, position=-3, name='AddButton', image_name='emj:Plus_Sign', color='green', hidden=True, tint=True)
+create_menu_button(v, toggle_menu, position=1, name='ShowMenuButton', image_name='emj:Wrench', color='white')
 
-create_menu_button(v, pin_notes, position=-4, name='DeleteButton', image_name='emj:Minus_Sign', color='red', hidden=True, tint=True)
-
-create_menu_button(v, pin_notes, position=1, name='ShowMenuButton', image_name='emj:Wrench', color='white')
+v['ShowMenuButton'].transform = Transform.rotation(math.radians(45))
 
 v.add_subview(d)
 d.load_url(os.path.abspath('dice/dice/index.html'))
 
 _make_webview_transparent(d)
+
+server = evernoteproxy.MyWSGIRefServer(port=80)
+  
+threading.Thread(group=None, target=evernoteproxy.app.run, name=None, args=(), kwargs={'server': server, 'quiet': False}).start()
+
+async def check_loop(checks):
+  if checks is None:
+    checks = 0
+  await dirties_queue_to_local()
+  if len(local_management['dirty']) > 0:
+    await send_locals_to_server()
+  checks += 1
+  if checks == 10:
+    checks = 0
+    await check_and_update_from_remote()
+  return checks
+  
+async def dirties_queue_to_local():
+  while not dirty_queue.empty():
+    id = dirty_queue.get_nowait()
+    dirties = local_management['dirty']
+    dirties[id] = True
+    local_management['dirty'] = dirties
+    
+aui.call_every_loop = check_loop
+aui.loop_delay = 5
+
+try:
+  aui.start_loop()
+finally:
+  server.stop()
