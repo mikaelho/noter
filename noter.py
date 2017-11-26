@@ -231,6 +231,15 @@ main_template = Template('''
       }
     }
     
+    function get_scroll_offset() {
+      return document.body.scrollLeft + "," + document.body.scrollTop;
+    }
+    
+    function set_scroll_offset(scroll_x, scroll_y) {
+      document.body.scrollLeft = scroll_x;
+      document.body.scrollTop = scroll_y;
+    }
+    
   </script>
   <style type="text/css">
     body {
@@ -314,6 +323,9 @@ def get_note_from_page(webview, id):
 selected_id = None
 
 class Delegate():
+  
+  scroll_pos = (0,0)
+  
   def webview_should_start_load(self, webview, url, nav_type):
     global selected_id
     
@@ -347,6 +359,10 @@ class Delegate():
       
     webbrowser.open(url)
     return False
+    
+  def webview_did_finish_load(self, webview):
+    x,y = self.scroll_pos
+    webview.eval_js(f'set_scroll_offset({x},{y});')
     
 def move_card(id, front_of_id):
   order_list = local_management['order']
@@ -416,9 +432,10 @@ async def check_and_update_from_remote():
       id, active = note_meta['guid'], note_meta['active']
       if id in dirties:
         continue
-      if not active and id in local_storage:
-        del local_storage[id]
-        remote_dirty = True
+      if not active:
+        if id in local_storage:
+          del local_storage[id]
+          remote_dirty = True
         continue
       note = await aui.get(f'http://127.0.0.1/get_note/{id}')
       (title, content, section) = (note['title'], note['content'], note['section'])
@@ -435,12 +452,12 @@ async def check_and_update_from_remote():
       show(v['MenuButton'])
     
 
-def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Checkmark_1', color='green', hidden=False, tint=False):
+def create_menu_button(parent, show_menu_func, position=2, name='MenuButton', image_name='emj:Checkmark_1', color=(1,1,1,0.8), hidden=False, tint=True, tint_color='black'):
   b = ui.Button(name=name)
   b.image = ui.Image(image_name)
   if not tint:
     b.image = b.image.with_rendering_mode(ui.RENDERING_MODE_ORIGINAL)
-  b.tint_color = 'white'
+  b.tint_color = tint_color
   b.background_color = color
   b.hidden = hidden
   d = 40
@@ -522,17 +539,17 @@ def show_dice(sender):
   d.alpha=0
   d.hidden=False
   show(d)
-  #hide(v['MenuButton'])
+  hide(v['ShowMenuButton'])
   hide(v['RollButton'])  
-  hide(v['MoveButton'])  
+  #hide(v['MoveButton'])  
   d.evaluate_javascript("$t.raise_event($t.id('throw'), 'mouseup');")
     
 @script
 def hide_dice(sender):
   hide(d)
-  #show(v['MenuButton'])
+  show(v['ShowMenuButton'])
   show(v['RollButton'])
-  show(v['MoveButton'])
+  #show(v['MoveButton'])
 
 overlay = ui.Button(frame=(0,0,d.width,d.height), flex='WH', background_color='transparent')
 overlay.action = hide_dice
@@ -563,6 +580,10 @@ if 'order' not in local_management:
   local_management['order'] = [ id for id in local_storage ]
 
 def update_view():
+  scroll_pos = v.eval_js("get_scroll_offset();")
+  if len(scroll_pos) > 0:
+    v.delegate.scroll_pos = scroll_pos.split(',')
+  
   card_html = ''
 
   order_list = local_management['order']
@@ -636,17 +657,17 @@ def toggle_menu(sender):
       btn = v[button_name]
       btn.center = locations[button_name]
 
-create_menu_button(v, show_dice, position=2, name='RollButton', image_name='emj:Game_Die', color='transparent')
+create_menu_button(v, show_dice, position=2, name='RollButton', image_name='d10.png')
 
-create_menu_button(v, pin_notes, position=-4, name='DeleteButton', image_name='emj:Minus_Sign', color=nice_red, hidden=True, tint=True)
+create_menu_button(v, pin_notes, position=-4, name='DeleteButton', image_name='iob:ios7_minus_empty_256', color=nice_red, hidden=True, tint=True, tint_color='white')
 
-create_menu_button(v, add_note, position=-3, name='AddButton', image_name='emj:Plus_Sign', color=nice_green, hidden=True, tint=True)
+create_menu_button(v, add_note, position=-3, name='AddButton', image_name='iob:ios7_plus_empty_256', color=nice_green, hidden=True, tint=True, tint_color='white')
 
-create_menu_button(v, pin_notes, position=-2, name='MoveButton', image_name='emj:Pushpin_2', color='transparent', hidden=True)
+create_menu_button(v, pin_notes, position=-2, name='MoveButton', image_name='pin.png', hidden=True)
 
-create_menu_button(v, toggle_menu, position=1, name='ShowMenuButton', image_name='emj:Wrench', color='white')
+create_menu_button(v, toggle_menu, position=1, name='ShowMenuButton', image_name='wrench.png')
 
-v['ShowMenuButton'].transform = Transform.rotation(math.radians(45))
+v['RollButton'].transform = Transform.rotation(math.radians(45))
 
 v.add_subview(d)
 d.load_url(os.path.abspath('dice/dice/index.html'))
