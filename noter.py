@@ -119,6 +119,7 @@ main_template = Template('''
 <html>
 <head>
   <meta name="viewport" content="height=device-height, initial-scale=0.5">
+  <meta name="format-detection" content="telephone=no">
   <script type="text/javascript">
   
     console = new Object();
@@ -225,6 +226,14 @@ main_template = Template('''
             document.execCommand("delete");
             card_id = target.parentNode.id;
             html = "<input type=\\"checkbox\\"/>";
+            document.execCommand("insertHTML", false, html);
+          }
+          if (beforePart.endsWith("|x|")) {
+            document.execCommand("delete");
+            document.execCommand("delete");
+            document.execCommand("delete");
+            card_id = target.parentNode.id;
+            html = "<input type=\\"checkbox\\" checked=\\"true\\"/>";
             document.execCommand("insertHTML", false, html);
           }
         }
@@ -383,7 +392,7 @@ def update_local_note(id, title, content):
     content = checkbox_re.sub(todo_true if state == 'T' else todo_false, content, 1)
   if prev_version['title'] != title or prev_version['content'] != content:
     dirty_queue.put_nowait(id)
-    print(dirty_queue.qsize())
+    #print(dirty_queue.qsize())
     to_local_store(id, title, content, prev_version['section'])
     v['MenuButton'].background_color = nice_red
 
@@ -407,7 +416,7 @@ def show_menu(sender):
 
 async def send_locals_to_server():
   dirties = local_management['dirty']
-  count = len(dirties)
+  #count = len(dirties)
   for id in dirties:
     local_note = local_storage[id]
     note = {
