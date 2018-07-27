@@ -3,6 +3,10 @@ import bottle, json, re
 auth_token = None
 from noterconf import *
 
+# Evernote API docs: http://dev.evernote.com/doc/reference/
+  
+# Auth token generation: https://www.evernote.com/api/DeveloperToken.action
+
 import evernote.edam.type.ttypes as Types
 from evernote.edam.notestore.ttypes import NoteFilter, SyncChunkFilter,  NotesMetadataResultSpec
 from evernote.api.client import EvernoteClient
@@ -50,14 +54,20 @@ app = EvernoteProxy()
     
 @app.get
 def get_sync_state():
-  current_state = app.note_store.getSyncState()
+  try:
+    current_state = app.note_store.getSyncState()
+  except Exception as e:
+    return { 'error': str(e) }
   return { 'update_count': current_state.updateCount }
   
 @app.get
 def get_filtered_sync_chunk(update_count):
   update_count = int(update_count)
   filter = SyncChunkFilter(includeNotes=True) 
-  sync_chunk = app.note_store.getFilteredSyncChunk(update_count, 10000, filter)
+  try:
+    sync_chunk = app.note_store.getFilteredSyncChunk(update_count, 10000, filter)
+  except Exception as e:
+    return { 'error': str(e) }
   notes = [{ 'guid': note.guid, 'title': note.title, 'active': note.active} for note in sync_chunk.notes if note.notebookGuid==notebook_guid]
   return {'notes': notes}
     
@@ -69,7 +79,10 @@ def create_note():
   cntnt = re.sub(r'<br>', r'<br/>', note['content'])
   ever_note.content = ''.join(note_syntax[0:3]) + cntnt + note_syntax[3]
   ever_note.notebookGuid = notebook_guid
-  ever_note_meta = app.note_store.createNote(ever_note)
+  try:
+    ever_note_meta = app.note_store.createNote(ever_note)
+  except Exception as e:
+    return { 'error': str(e) }
   return {
     'updateCount': ever_note_meta.updateSequenceNum, 
     'id': ever_note_meta.guid
@@ -77,7 +90,10 @@ def create_note():
   
 @app.get
 def get_note(id):
-  note = app.note_store.getNote(id, True, False, False, False)
+  try:
+    note = app.note_store.getNote(id, True, False, False, False)
+  except Exception as e:
+    return { 'error': str(e) }
   stripped_content = note.content
   if '<en-note/>' in stripped_content:
     stripped_content = ''
@@ -107,12 +123,18 @@ def update_note():
   ever_note.title = note['title']
   cntnt = re.sub(r'<br>', r'<br/>', note['content'])
   ever_note.content = ''.join(note_syntax[0:3]) + cntnt + note_syntax[3]
-  ever_note_meta = app.note_store.updateNote(ever_note)
+  try:
+    ever_note_meta = app.note_store.updateNote(ever_note)
+  except Exception as e:
+    return { 'error': str(e) }
   return { 'update_count': ever_note_meta.updateSequenceNum }
   
 @app.get
 def delete_note(id):
-  update_count = app.note_store.deleteNote(id)
+  try:
+    update_count = app.note_store.deleteNote(id)
+  except Exception as e:
+    return { 'error': str(e) }
   return { 'update_count': update_count }
 
 if __name__ == '__main__':
@@ -154,4 +176,3 @@ if __name__ == '__main__':
   
   finally:
     server.stop()
-
