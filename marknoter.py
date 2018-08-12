@@ -51,6 +51,7 @@ class LocalModel():
     section_on = True
     for id in self.local_management['order']:
       note = self.local_storage[id]
+      note['id'] = id
       if not note:
         removed.append(id)
         continue
@@ -78,16 +79,24 @@ class DeskView(View):
     self.scroll_view = scroll_view
     scroll_view.directional_lock_enabled = True
     self.scale = 1
+    self.move_placeholder = View(background_color=(.04, .66, .22, .5), border_color=(.06, 1.0, .33), border_width=1, hidden=True)
+    self.add_subview(self.move_placeholder)
     g = Gestures()
     g.add_pinch(self, self.pinch_handler)
   
   @on_main_thread
   def lay_cards_out(self):
-    notes = self.model.get_notes_list()
-    self.cards = [ CardView(note['title'], note['content']) for note in notes]
-    for card in self.cards:
-      self.add_subview(card)
+    self.cards = []
+    for note in self.model.get_notes_list():
+      card = self[note['id']]
+      if not card:
+        card = CardView(note['id'], note['title'], note['content'])
+        self.add_subview(card)
+      card.order_index = len(self.cards)
+      self.cards.append(card)
+    self.set_positions()
     
+  def set_positions(self):
     total_height = 5
     gap = 5
     card_width = global_width_unit
@@ -98,8 +107,10 @@ class DeskView(View):
     current_x = current_y = gap
     max_height = 0
     for card in self.cards:
-      card.x = current_x
-      card.y = current_y
+      view_to_move = self.move_placeholder if card.moving else card
+      move(view_to_move, current_x, current_y)
+      #card.x = current_x
+      #card.y = current_y
       current_y += card.height + gap
       max_height = max(max_height, current_y)
       if current_y > get_screen_size()[1]*1.3:
@@ -145,6 +156,19 @@ class DeskView(View):
     elif data.state == Gestures.ENDED:
       self.scale = self.scale * data.scale
       
+  def show_placeholder(self, card):
+    self.move_placeholder.frame = card.frame
+    self.move_placeholder.hidden = False
+    self.move_placeholder.alpha = 1
+    
+  @script
+  def hide_placeholder(self, card):
+    hide(self.move_placeholder)
+    (x,y) = self.move_placeholder.x, self.move_placeholder.y
+    move(card, x, y, ease_func=ease_out)
+    yield
+    self.move_placeholder.hidden = True
+      
       
 class CardStack(View):
   
@@ -159,9 +183,12 @@ class CardStack(View):
     
 class CardView(View):
 
-  def __init__(self, title, contents, **kwargs):
-    super().__init__(**kwargs)
+  def __init__(self, id, title, contents, **kwargs):
+    super().__init__(name=id, **kwargs)
+    self.moving=False
     self.background_color = 'white'
+    self.border_color='grey'
+    self.border_width=1
     contents = self.evernote_to_local(contents)
     
     self.tf = tf = Markdown(TextView(text=title, frame=(0,0,self.width,30), flex='W', font=('Arial Rounded MT Bold',12), background_color='white', scroll_enabled=False))
@@ -177,9 +204,7 @@ class CardView(View):
     self.add_subview(tf)
     self.add_subview(tv)
     
-    g = Gestures()
-    #g.add_pan(tv, self.long_press_handler, minimum_number_of_touches = 2, maximum_number_of_touches = 2)
-    g.add_force_press(tv, self.long_press_handler)
+    Gestures().add_long_press(tv, self.long_press_handler)
     
   def evernote_to_local(self, contents):  
     contents = eparser.feed(contents).strip()
@@ -193,14 +218,21 @@ class CardView(View):
     
   def long_press_handler(self, data):
     if data.state == Gestures.BEGAN:
-      self.prev_pos = convert_point(data.location, self)
+      self.moving = True
+      self.superview.show_placeholder(self)
+      self.prev_pos = convert_point(data.location, self, self.superview)
+      self.bring_to_front()
+      scale(self, 1.1, duration=0.3, ease_func=ease_out)
     if data.state == Gestures.CHANGED:
-      current_pos = convert_point(data.location, self)
+      current_pos = convert_point(data.location, self, self.superview)
       delta = current_pos - self.prev_pos
       self.prev_pos = current_pos
       self.x += delta.x
       self.y += delta.y
-
+    if data.state == Gestures.ENDED:
+      self.moving = False
+      self.superview.hide_placeholder(self)
+      scale(self, 1, start_value=1.1, duration=0.3, ease_func=ease_in)
 
 class Markdown(Extender):
 
@@ -458,6 +490,7 @@ class Markdown(Extender):
   def textview_did_end_editing(self, textview):
     #TODO: Update after edit
     pass
+    #print(textview.objc_instance.gestureRecognizers())
     #(start, end) = self.selected_range
     #self.changed_func(self.text)
     #self.end_edit_func(start)
@@ -513,6 +546,8 @@ class Markdown(Extender):
 
 class MenuPanel(View):
   
+  
+  
   def create_menu(self, desk):
     self.desk = desk
     self.menu_open = False
@@ -524,13 +559,13 @@ class MenuPanel(View):
   def toggle_menu(self, sender):
     menu_speed = 0.5
     self.menu_open = self.menu_open == False
-    menu_btn = self['ShowMenuButton']
+    menu_btn = self.superview['ShowMenuButton']
     menu_location = menu_btn.center
     if self.menu_open:
       rotate_by(menu_btn, -90, duration=menu_speed)
       slide_color(menu_btn, 'background_color', (1,1,1,0.4), duration=menu_speed)
       for button_name in self.menu_buttons:
-        btn = self[button_name]
+        btn = self.superview[button_name]
         target_location = btn.center
         btn.center = menu_location
         show(btn, duration=menu_speed)
@@ -541,19 +576,21 @@ class MenuPanel(View):
       rotate_by(menu_btn, 90, duration=menu_speed)
       slide_color(menu_btn, 'background_color', 'white', duration=menu_speed)
       for button_name in self.menu_buttons:
-        btn = self[button_name]
+        btn = self.superview[button_name]
         locations[button_name] = btn.center
         hide(btn, duration=menu_speed)
         roll_to(btn, menu_location, end_right_side_up=False, duration=menu_speed)
       yield
       for button_name in self.menu_buttons:
-        btn = self[button_name]
+        btn = self.superview[button_name]
         btn.center = locations[button_name]
     
   def pin_notes(self, sender):
     pass
 
+  @on_main_thread
   def create_menu_button(self, show_menu_func, position=2, name='MenuButton', image_name='emj:Checkmark_1', color=(1,1,1,0.8), hidden=False, tint=True, tint_color='black'):
+    (w, h) = self.frame.size
     b = Button(name=name)
     b.image = Image(image_name)
     if not tint:
@@ -565,15 +602,15 @@ class MenuPanel(View):
     b.width = b.height = d
     b.corner_radius = 0.5 * d
     if position > 0:
-      b.x = self.width - 1.5 * d
-      b.y = self.height - position * 1.5 * d
+      b.x = w - 1.5 * d
+      b.y = h - position * 1.5 * d
     else:
-      b.x = self.width + position * 1.5 * d
-      b.y = self.height - 1.5 * d
+      b.x = w + position * 1.5 * d
+      b.y = h - 1.5 * d
     
     b.action = show_menu_func
-    self.add_subview(b)
-    b.bring_to_front()
+    self.superview.add_subview(b)
+    
 
 if __name__ == '__main__':
   
@@ -581,8 +618,8 @@ if __name__ == '__main__':
   
   backpanel = View()
   
-  menupanel = MenuPanel(touch_enabled=False, frame=backpanel.bounds, flex='WH')
-
+  menupanel = MenuPanel(frame=backpanel.bounds, flex='WH')
+  backpanel.add_subview(menupanel)
   
   scroller = ScrollView(background_color='grey', frame=backpanel.bounds, flex='WH')
   backpanel.add_subview(scroller)
@@ -590,8 +627,6 @@ if __name__ == '__main__':
   desk = DeskView(model, scroller)
   scroller.add_subview(desk) 
   desk.lay_cards_out()
-
-  backpanel.add_subview(menupanel)
 
   backpanel.present()
   
