@@ -38,6 +38,14 @@ class LocalModel():
     if 'order' not in self.local_management:
       self.local_management['order'] = [ id for id in self.local_storage ]
       
+  def move_item(self, frm, to):
+    order_list = self.local_management['order']
+    
+    order_list.insert(to, order_list[frm])
+    if frm > to: frm += 1
+    order_list.pop(frm)
+    self.local_management['order'] = order_list
+      
   def get_notes_list(self):
     order_list = self.local_management['order']
     for id in self.local_storage:
@@ -95,6 +103,9 @@ class DeskView(View):
       card.order_index = len(self.cards)
       self.cards.append(card)
     self.set_positions()
+    for card in self.cards:
+      (x,y) = card.target_coords
+      move(card, x, y)
     
   def set_positions(self):
     total_height = 5
@@ -107,8 +118,8 @@ class DeskView(View):
     current_x = current_y = gap
     max_height = 0
     for card in self.cards:
-      view_to_move = self.move_placeholder if card.moving else card
-      move(view_to_move, current_x, current_y)
+      #view_to_move = self.move_placeholder if card.moving else card
+      card.target_coords = (current_x, current_y)
       #card.x = current_x
       #card.y = current_y
       current_y += card.height + gap
@@ -160,15 +171,28 @@ class DeskView(View):
     self.move_placeholder.frame = card.frame
     self.move_placeholder.hidden = False
     self.move_placeholder.alpha = 1
+    self.move_placeholder.bring_to_front()
     
   @script
   def hide_placeholder(self, card):
+    if card.current_target is not card: 
+      self.model.move_item(card.order_index, card.current_target.order_index)
     hide(self.move_placeholder)
-    (x,y) = self.move_placeholder.x, self.move_placeholder.y
-    move(card, x, y, ease_func=ease_out)
     yield
     self.move_placeholder.hidden = True
       
+  def check_for_changed_position(self, moving_card, current_pos):
+    for card in self.cards:
+      if card is not moving_card:
+        target_frame = Rect(*card.target_coords, *card.frame.size)
+        if target_frame.contains_point(current_pos):
+          self.model.move_item(moving_card.order_index, card.order_index)
+          slide_tuple(self.move_placeholder, 'frame', card.frame, duration=0.2)
+          self.set_positions()
+          for card in self.cards:
+            move(card, *card.target_coords)
+          break
+          
       
 class CardStack(View):
   
@@ -185,11 +209,14 @@ class CardView(View):
 
   def __init__(self, id, title, contents, **kwargs):
     super().__init__(name=id, **kwargs)
-    self.moving=False
+    self.moving = False
     self.background_color = 'white'
     self.border_color='grey'
     self.border_width=1
     contents = self.evernote_to_local(contents)
+    
+    self.selection_panel = View(frame=self.bounds, flex='WH')
+    Gestures().add_tap_handler(self.selection_panel, self.tap_handler)
     
     self.tf = tf = Markdown(TextView(text=title, frame=(0,0,self.width,30), flex='W', font=('Arial Rounded MT Bold',12), background_color='white', scroll_enabled=False))
     #tf.objc_instance.subviews()[0].setBorderStyle(0)
@@ -220,11 +247,13 @@ class CardView(View):
     if data.state == Gestures.BEGAN:
       self.moving = True
       self.superview.show_placeholder(self)
+      self.current_target = self
       self.prev_pos = convert_point(data.location, self, self.superview)
       self.bring_to_front()
       scale(self, 1.1, duration=0.3, ease_func=ease_out)
     if data.state == Gestures.CHANGED:
       current_pos = convert_point(data.location, self, self.superview)
+      self.superview.check_for_changed_position(self, current_pos)
       delta = current_pos - self.prev_pos
       self.prev_pos = current_pos
       self.x += delta.x
@@ -233,6 +262,10 @@ class CardView(View):
       self.moving = False
       self.superview.hide_placeholder(self)
       scale(self, 1, start_value=1.1, duration=0.3, ease_func=ease_in)
+      #self.superview.lay_cards_out()
+      
+    def tap_handler(self, data):
+      pass
 
 class Markdown(Extender):
 
